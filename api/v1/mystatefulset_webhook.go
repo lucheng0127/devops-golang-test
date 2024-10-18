@@ -17,7 +17,10 @@ limitations under the License.
 package v1
 
 import (
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -34,9 +37,7 @@ func (r *MyStatefulSet) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
-// +kubebuilder:webhook:path=/mutate-devops-github-com-v1-mystatefulset,mutating=true,failurePolicy=fail,sideEffects=None,groups=devops.github.com,resources=mystatefulsets,verbs=create;update,versions=v1,name=mmystatefulset.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/mutate-devops-github-com-v1-mystatefulset,mutating=true,failurePolicy=fail,sideEffects=None,groups=devops.github.com,resources=mystatefulsets,verbs=create;update;delete,versions=v1,name=mmystatefulset.kb.io,admissionReviewVersions=v1
 
 var _ webhook.Defaulter = &MyStatefulSet{}
 
@@ -44,36 +45,86 @@ var _ webhook.Defaulter = &MyStatefulSet{}
 func (r *MyStatefulSet) Default() {
 	mystatefulsetlog.Info("default", "name", r.Name)
 
-	// TODO(user): fill in your defaulting logic.
+	// Check grace period, if not set it means do not check pod ready set it to -1,
+	// if set when create pods for statefulset, if timeout for pod ready, set statefulset status to error
+	if r.Spec.GracePeriod == nil {
+		r.Spec.GracePeriod = new(int)
+		*r.Spec.GracePeriod = -1
+	}
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 // NOTE: The 'path' attribute must follow a specific pattern and should not be modified directly here.
 // Modifying the path for an invalid path can cause API server errors; failing to locate the webhook.
-// +kubebuilder:webhook:path=/validate-devops-github-com-v1-mystatefulset,mutating=false,failurePolicy=fail,sideEffects=None,groups=devops.github.com,resources=mystatefulsets,verbs=create;update,versions=v1,name=vmystatefulset.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-devops-github-com-v1-mystatefulset,mutating=false,failurePolicy=fail,sideEffects=None,groups=devops.github.com,resources=mystatefulsets,verbs=create;update;delete,versions=v1,name=vmystatefulset.kb.io,admissionReviewVersions=v1
 
 var _ webhook.Validator = &MyStatefulSet{}
+
+func (r *MyStatefulSet) ValidateReplicas() *field.Error {
+	if *r.Spec.Replicas < 1 {
+		return field.Invalid(
+			field.NewPath("spec").Child("replicas"),
+			*r.Spec.Replicas,
+			"replicas must large than 1",
+		)
+	}
+
+	return nil
+}
+
+func (r *MyStatefulSet) ValidatePodImage() *field.Error {
+	for _, c := range r.Spec.Template.Spec.Containers {
+		if c.Image == "" {
+			return field.Required(
+				field.NewPath("sepc").Child("template").Child("spec").Child("containers").Child("image"),
+				"image can't be empty",
+			)
+		}
+	}
+
+	return nil
+}
+
+func (r *MyStatefulSet) ValidateStatefulset() error {
+	var errs field.ErrorList
+
+	if err := r.ValidateReplicas(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := r.ValidatePodImage(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: "devops", Kind: "MyStatefulSet"},
+		r.Name,
+		errs,
+	)
+}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *MyStatefulSet) ValidateCreate() (admission.Warnings, error) {
 	mystatefulsetlog.Info("validate create", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object creation.
-	return nil, nil
+	return nil, r.ValidateStatefulset()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *MyStatefulSet) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	mystatefulsetlog.Info("validate update", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object update.
-	return nil, nil
+	return nil, r.ValidateStatefulset()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
 func (r *MyStatefulSet) ValidateDelete() (admission.Warnings, error) {
 	mystatefulsetlog.Info("validate delete", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object deletion.
+	// TODO(shawn): Implement it if needed
 	return nil, nil
 }

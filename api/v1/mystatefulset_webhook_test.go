@@ -17,7 +17,10 @@ limitations under the License.
 package v1
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
+	corev1 "k8s.io/api/core/v1"
 )
 
 var _ = Describe("MyStatefulSet Webhook", func() {
@@ -45,3 +48,78 @@ var _ = Describe("MyStatefulSet Webhook", func() {
 	})
 
 })
+
+func TestMyStatefulSet_ValidateStatefulset(t *testing.T) {
+	correctReplicas := new(int)
+	wrongReplicas := new(int)
+	*correctReplicas = 3
+	*wrongReplicas = 0
+
+	type fields struct {
+		Spec MyStatefulSetSpec
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		wantErr bool
+	}{
+		{
+			name: "OK",
+			fields: fields{
+				Spec: MyStatefulSetSpec{
+					Replicas: correctReplicas,
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Image: "redis"},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Err replicas",
+			fields: fields{
+				Spec: MyStatefulSetSpec{
+					Replicas: wrongReplicas,
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Image: "redis"},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Err image",
+			fields: fields{
+				Spec: MyStatefulSetSpec{
+					Replicas: correctReplicas,
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Image: ""},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &MyStatefulSet{
+				Spec: tt.fields.Spec,
+			}
+			if err := r.ValidateStatefulset(); (err != nil) != tt.wantErr {
+				t.Errorf("MyStatefulSet.ValidateStatefulset() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
