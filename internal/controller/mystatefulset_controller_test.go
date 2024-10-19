@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	oe "errors"
 	"fmt"
 	devopsv1 "lucheng/api/v1"
 	"lucheng/mocks/mock_client"
@@ -215,6 +216,155 @@ func TestMgrTeardown(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				fmt.Println(err)
 				t.Errorf("MyStatefulSetReconciler.Reconcile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}
+
+func Test_ignoreErrs(t *testing.T) {
+	type args struct {
+		err error
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "no err",
+			args: args{
+				err: nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "ignore err",
+			args: args{
+				err: oe.New("resource name may not be empty"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "err",
+			args: args{
+				err: oe.New("alter error"),
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ignoreErrs(tt.args.err); (err != nil) != tt.wantErr {
+				t.Errorf("ignoreErrs() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSetMgr_CreatePod(t *testing.T) {
+	// Setup mock client
+	mock_ctrl := gomock.NewController(t)
+	defer mock_ctrl.Finish()
+	mock_client := mock_client.NewMockClient(mock_ctrl)
+	mock_client.EXPECT().Scheme().AnyTimes()
+	mock_client.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+	ctx := context.Background()
+	replicas := new(int)
+	*replicas = 3
+	rec := MyStatefulSetReconciler{
+		Client: mock_client,
+		Scheme: mock_client.Scheme(),
+	}
+	set := devopsv1.MyStatefulSet{
+		Spec: devopsv1.MyStatefulSetSpec{
+			Replicas: replicas,
+		},
+	}
+	logger := log.FromContext(ctx)
+	mgr := NewMgr(&rec, &set, logger)
+
+	mock_client.EXPECT().Create(ctx, gomock.Any()).AnyTimes().Return(nil)
+
+	type args struct {
+		ctx     context.Context
+		idx     int
+		timeout int
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "OK",
+			args: args{
+				ctx:     ctx,
+				idx:     0,
+				timeout: 5,
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.(*SetMgr).CreatePod(tt.args.ctx, tt.args.idx, tt.args.timeout)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SetMgr.CreatePod() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+}
+
+func TestSetMgr_ClaimPvc(t *testing.T) {
+	// Setup mock client
+	mock_ctrl := gomock.NewController(t)
+	defer mock_ctrl.Finish()
+	mock_client := mock_client.NewMockClient(mock_ctrl)
+	mock_client.EXPECT().Scheme().AnyTimes()
+	mock_client.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+	ctx := context.Background()
+	replicas := new(int)
+	*replicas = 3
+	rec := MyStatefulSetReconciler{
+		Client: mock_client,
+		Scheme: mock_client.Scheme(),
+	}
+	set := devopsv1.MyStatefulSet{
+		Spec: devopsv1.MyStatefulSetSpec{
+			Replicas: replicas,
+		},
+	}
+	logger := log.FromContext(ctx)
+	mgr := NewMgr(&rec, &set, logger)
+
+	mock_client.EXPECT().Create(ctx, gomock.Any()).AnyTimes().Return(nil)
+	type args struct {
+		ctx context.Context
+		idx int
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "ok",
+			args: args{
+				ctx: ctx,
+				idx: 0,
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.(*SetMgr).ClaimPvc(tt.args.ctx, tt.args.idx)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SetMgr.ClaimPvc() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})

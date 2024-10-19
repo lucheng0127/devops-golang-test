@@ -7,10 +7,14 @@ metadata:
   name: mss
 spec:
   replicas: 3
-  storageClass: standard
-  gracePeriod: 5
+  storageClass: standard # storageclass name, make sure it exist
+  size: 2 # pvc storage size M
+  gracePeriod: 5 # period to wait pod running, not implement right now
   template:
     spec:
       containers:
       - name: redis
         image: quay.io/opstree/redis:latest
+        volumeMounts:
+          - name: data # XXX: right now fixed volume name
+            mountPath: "/data"

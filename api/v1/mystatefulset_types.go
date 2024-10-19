@@ -31,6 +31,7 @@ type MyStatefulSetSpec struct {
 
 	Replicas     *int                   `json:"replicas"`
 	StorageClass string                 `json:"storageClass,omitempty"`
+	Size         int                    `json:"size"`
 	GracePeriod  *int                   `json:"gracePeriod,omitempty"`
 	Template     corev1.PodTemplateSpec `json:"template,omitempty"`
 }
@@ -39,7 +40,6 @@ type MyStatefulSetSpec struct {
 type MyStatefulSetStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	PodIdx    int    `json:"podIdx"`
 	ErrReason string `json:"errReason"`
 }
 

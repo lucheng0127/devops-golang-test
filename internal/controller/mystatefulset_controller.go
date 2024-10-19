@@ -23,7 +23,11 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -73,23 +77,129 @@ func NewMgr(r *MyStatefulSetReconciler, set *devopsv1.MyStatefulSet, logger logr
 	return &SetMgr{Set: set, Rec: r, Logger: logger}
 }
 
+func (mgr *SetMgr) AttachPvcForPod(pod *corev1.Pod, idx int) *corev1.Pod {
+	pvcName := mgr.pvcNameByIdx(idx)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: "data",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvcName,
+				ReadOnly:  false,
+			},
+		},
+	})
+	return pod
+}
+
 func (mgr *SetMgr) CreatePod(ctx context.Context, idx, timeout int) (*corev1.Pod, error) {
-	// TODO(shawn): Implement it
-	return nil, nil
+	podName := mgr.podNameByIdx(idx)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: mgr.Set.Namespace,
+			Labels:    map[string]string{"mangledBy": mgr.Set.Name},
+		},
+		Spec: mgr.Set.Spec.Template.Spec,
+	}
+	pod = mgr.AttachPvcForPod(pod, idx)
+
+	if err := mgr.Rec.Create(ctx, pod); client.IgnoreAlreadyExists(err) != nil {
+		mgr.Logger.Error(err, fmt.Sprintf("create pod %s namespace %s", podName, mgr.Set.Namespace))
+		return nil, err
+	}
+
+	mgr.Logger.Info(fmt.Sprintf("create pod %s namespace %s succeed", podName, mgr.Set.Namespace))
+	return pod, nil
 }
 
 func (mgr *SetMgr) ClaimPvc(ctx context.Context, idx int) (*corev1.PersistentVolumeClaim, error) {
-	// TODO(shawn): Implement it
-	return nil, nil
+	name := mgr.pvcNameByIdx(idx)
+	pvc := &corev1.PersistentVolumeClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "PersistentVolumeClaim",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: mgr.Set.Namespace,
+			Labels:    map[string]string{"mangledBy": mgr.Set.Name},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &mgr.Set.Spec.StorageClass,
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					// XXX: Fix size right now
+					corev1.ResourceStorage: *resource.NewQuantity(int64(mgr.Set.Spec.Size), resource.DecimalSI),
+				},
+			},
+		},
+	}
+
+	if err := mgr.Rec.Create(ctx, pvc); client.IgnoreAlreadyExists(err) != nil {
+		mgr.Logger.Error(err, fmt.Sprintf("claim pvc %s namespace %s", name, mgr.Set.Namespace))
+		return nil, err
+	}
+
+	mgr.Logger.Info(fmt.Sprintf("claim pvc %s succeed namespace %s succeed", name, mgr.Set.Namespace))
+	return pvc, nil
 }
 
 func (mgr *SetMgr) DeletePod(ctx context.Context, idx int) error {
-	// TODO(shawn): Implement it
+	podName := mgr.podNameByIdx(idx)
+	var pod corev1.Pod
+
+	err := mgr.Rec.Get(ctx, types.NamespacedName{
+		Name:      podName,
+		Namespace: mgr.Set.Namespace,
+	}, &pod)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			mgr.Logger.Info(fmt.Sprintf("delete pod %s succeed namespace %s succeed", podName, mgr.Set.Namespace))
+			return nil
+		}
+
+		mgr.Logger.Error(err, fmt.Sprintf("get pod %s succeed namespace %s", podName, mgr.Set.Namespace))
+		return err
+	}
+
+	if err := mgr.Rec.Delete(ctx, &pod); client.IgnoreNotFound(err) != nil {
+		mgr.Logger.Error(err, fmt.Sprintf("delete pod %s succeed namespace %s", podName, mgr.Set.Namespace))
+		return err
+	}
+
+	mgr.Logger.Info(fmt.Sprintf("delete pod %s succeed namespace %s succeed", podName, mgr.Set.Namespace))
 	return nil
 }
 
 func (mgr *SetMgr) ReleasePvc(ctx context.Context, idx int) error {
-	// TODO(shawn): Implement it
+	name := mgr.pvcNameByIdx(idx)
+	var pvc corev1.PersistentVolumeClaim
+
+	err := mgr.Rec.Get(ctx, types.NamespacedName{
+		Name:      name,
+		Namespace: mgr.Set.Namespace,
+	}, &pvc)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			mgr.Logger.Info(fmt.Sprintf("release pvc %s succeed namespace %s succeed", name, mgr.Set.Namespace))
+			return nil
+		}
+
+		mgr.Logger.Error(err, fmt.Sprintf("get pvc %s namespace %s", name, mgr.Set.Namespace))
+		return err
+	}
+
+	if err := mgr.Rec.Delete(ctx, &pvc); client.IgnoreNotFound(err) != nil {
+		mgr.Logger.Error(err, fmt.Sprintf("release pvc %s namespace %s", name, mgr.Set.Namespace))
+		return err
+	}
+
+	mgr.Logger.Info(fmt.Sprintf("release pvc %s succeed namespace %s succeed", name, mgr.Set.Namespace))
 	return nil
 }
 
@@ -119,14 +229,13 @@ func (mgr *SetMgr) Sync(ctx context.Context) error {
 	// Shrink or add pods according to replicas
 	if setPodNum == *mgr.Set.Spec.Replicas {
 		// Do nothing and return
-		mgr.Set.Status.PodIdx = setPodNum - 1
 		return nil
 	} else if setPodNum > *mgr.Set.Spec.Replicas {
 		// Shrink, delete pod but keep pvc
-		for idx := *mgr.Set.Spec.Replicas; idx > setPodNum; idx-- {
+		for idx := setPodNum; idx > *mgr.Set.Spec.Replicas; idx-- {
 			mgr.Logger.Info(fmt.Sprintf("try to delete MyStatefulset %s pod with idx %d", mgr.Set.Name, idx))
 
-			if err := mgr.DeletePod(ctx, idx); err != nil {
+			if err := mgr.DeletePod(ctx, idx-1); err != nil {
 				return err
 			}
 
