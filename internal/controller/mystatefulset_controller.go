@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,10 +59,143 @@ func ignoreErrs(err error) error {
 // Use interface so can be mock by gomock
 
 type Mgr interface {
-	CreatePod(context.Context, int, int) (*corev1.Pod, error)
-	ClaimPvc(context.Context, int) (*corev1.PersistentVolumeClaim, error)
-	DeletePod(context.Context, int) error
-	ReleasePvc(context.Context, int) error
+	Sync(context.Context) error
+	Teardown(context.Context) error
+}
+
+type SetMgr struct {
+	Set    *devopsv1.MyStatefulSet
+	Rec    *MyStatefulSetReconciler
+	Logger logr.Logger
+}
+
+func NewMgr(r *MyStatefulSetReconciler, set *devopsv1.MyStatefulSet, logger logr.Logger) Mgr {
+	return &SetMgr{Set: set, Rec: r, Logger: logger}
+}
+
+func (mgr *SetMgr) CreatePod(ctx context.Context, idx, timeout int) (*corev1.Pod, error) {
+	// TODO(shawn): Implement it
+	return nil, nil
+}
+
+func (mgr *SetMgr) ClaimPvc(ctx context.Context, idx int) (*corev1.PersistentVolumeClaim, error) {
+	// TODO(shawn): Implement it
+	return nil, nil
+}
+
+func (mgr *SetMgr) DeletePod(ctx context.Context, idx int) error {
+	// TODO(shawn): Implement it
+	return nil
+}
+
+func (mgr *SetMgr) ReleasePvc(ctx context.Context, idx int) error {
+	// TODO(shawn): Implement it
+	return nil
+}
+
+func (mgr *SetMgr) podNameByIdx(idx int) string {
+	return fmt.Sprintf("pod-%s-%d", mgr.Set.Name, idx)
+}
+
+func (mgr *SetMgr) pvcNameByIdx(idx int) string {
+	return fmt.Sprintf("pvc-%s-%d", mgr.Set.Name, idx)
+}
+
+func (mgr *SetMgr) Sync(ctx context.Context) error {
+	// List ready pod
+	setPods := &corev1.PodList{}
+	query := client.MatchingLabels{"mangledBy": mgr.Set.Name}
+	if err := mgr.Rec.Client.List(ctx, setPods, client.InNamespace(mgr.Set.Namespace), query); client.IgnoreAlreadyExists(err) != nil {
+		return err
+	}
+
+	setPodNum := 0
+	for _, pod := range setPods.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			setPodNum++
+		}
+	}
+
+	// Shrink or add pods according to replicas
+	if setPodNum == *mgr.Set.Spec.Replicas {
+		// Do nothing and return
+		mgr.Set.Status.PodIdx = setPodNum - 1
+		return nil
+	} else if setPodNum > *mgr.Set.Spec.Replicas {
+		// Shrink, delete pod but keep pvc
+		for idx := *mgr.Set.Spec.Replicas; idx > setPodNum; idx-- {
+			mgr.Logger.Info(fmt.Sprintf("try to delete MyStatefulset %s pod with idx %d", mgr.Set.Name, idx))
+
+			if err := mgr.DeletePod(ctx, idx); err != nil {
+				return err
+			}
+
+			mgr.Logger.Info(fmt.Sprintf("delete MyStatefulset %s pod with idx %d succeed", mgr.Set.Name, idx))
+		}
+
+		return nil
+	} else {
+		// Add, create pod and pvc
+		for idx := setPodNum; idx < *mgr.Set.Spec.Replicas; idx++ {
+			// Claim pvc
+			_, err := mgr.ClaimPvc(ctx, idx)
+			if client.IgnoreAlreadyExists(err) != nil {
+				return err
+			}
+			// mgr.Logger.Info(fmt.Sprintf("claim pvc %s naemspace %s succeed", pvc.Name, pvc.Namespace))
+			mgr.Logger.Info(fmt.Sprintf("claim pvc %d succeed", idx))
+
+			// Create pod
+			_, err = mgr.CreatePod(ctx, idx, *mgr.Set.Spec.GracePeriod)
+			if err != nil {
+				return err
+			}
+
+			// mgr.Logger.Info(fmt.Sprintf("create pod %s naemspace %s succeed", pod.Name, pod.Namespace))
+			mgr.Logger.Info(fmt.Sprintf("create pod %d succeed", idx))
+		}
+
+		return nil
+	}
+}
+
+func (mgr *SetMgr) Teardown(ctx context.Context) error {
+	// List all pods
+	setPods := &corev1.PodList{}
+	query := client.MatchingLabels{"mangledBy": mgr.Set.Name}
+	if err := mgr.Rec.Client.List(ctx, setPods, client.InNamespace(mgr.Set.Namespace), query); client.IgnoreAlreadyExists(err) != nil {
+		return err
+	}
+
+	errReturn := false
+
+	// Delete pods reverse
+	for idx := len(setPods.Items); idx >= 0; idx-- {
+		if err := mgr.DeletePod(ctx, idx); client.IgnoreNotFound(err) != nil {
+			errReturn = true
+			mgr.Logger.Error(err, fmt.Sprintf("delete MyStatefulset %s pod %d", mgr.Set.Name, idx))
+		}
+	}
+
+	// List all pvc, beacuse pvc maybe more than pods when update statefulset replicas
+	setPvcs := &corev1.PersistentVolumeClaimList{}
+	if err := mgr.Rec.Client.List(ctx, setPvcs, client.InNamespace(mgr.Set.Namespace), query); client.IgnoreAlreadyExists(err) != nil {
+		return err
+	}
+
+	// Release pvc
+	for idx := len(setPvcs.Items); idx >= 0; idx-- {
+		if err := mgr.ReleasePvc(ctx, idx); client.IgnoreNotFound(err) != nil {
+			errReturn = true
+			mgr.Logger.Error(err, fmt.Sprintf("release MyStatefulset %s pvc %d", mgr.Set.Name, idx))
+		}
+	}
+
+	if errReturn {
+		return fmt.Errorf("teardown MyStatefulSet %s error", mgr.Set.Name)
+	}
+
+	return nil
 }
 
 // +kubebuilder:rbac:groups=devops.github.com,resources=mystatefulsets,verbs=get;list;watch;create;update;patch;delete
@@ -98,7 +232,8 @@ func (r *MyStatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}()
 
-	// TODO(shawn): Init pod manager and pvc manager
+	// Init mgr
+	mgr := NewMgr(r, &mySet, logger)
 
 	// Handle delete statefulset
 	if mySet.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -115,7 +250,13 @@ func (r *MyStatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Delete pods reversed order
 			logger.Info(fmt.Sprintf("try to delete MyStatefulSet %s in namespace %s", mySet.ObjectMeta.Name, mySet.ObjectMeta.Namespace))
 
-			// TODO(shawn): Call mgr teardown pods and pvcs for statefulset
+			// Call mgr teardown pods and pvcs for statefulset
+			if err := mgr.Teardown(ctx); err != nil {
+				logger.Error(err, fmt.Sprintf("delete MyStatefulSet %s namespace %s", mySet.ObjectMeta.Name, mySet.ObjectMeta.Namespace))
+				return ctrl.Result{}, err
+			}
+
+			logger.Info(fmt.Sprintf("delete MyStatefulSet %s in namespace %s finished", mySet.ObjectMeta.Name, mySet.ObjectMeta.Namespace))
 		}
 
 		controllerutil.RemoveFinalizer(&mySet, FZNAME)
@@ -125,10 +266,18 @@ func (r *MyStatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	// Check status of statefulset pods, if all ready do nothing and return
+	// Call mgr setup pods and pvcs for statefulset utils all ready or timeout
+	if err := mgr.Sync(ctx); err != nil {
+		logger.Error(err, fmt.Sprintf("sync MyStatefulSet %s namespace %s resource", mySet.ObjectMeta.Name, mySet.ObjectMeta.Namespace))
 
-	// TODO(shawn): Call mgr setup pods and pvcs for statefulset utils all ready or timeout
+		mySet.Status.ErrReason = err.Error()
 
+		needUpdate = true
+		return ctrl.Result{}, err
+	}
+
+	logger.Info(fmt.Sprintf("sync MyStatefulSet %s in namespace %s resource finished", mySet.ObjectMeta.Name, mySet.ObjectMeta.Namespace))
+	needUpdate = true
 	return ctrl.Result{}, nil
 }
 

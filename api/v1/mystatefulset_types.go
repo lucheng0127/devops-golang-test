@@ -39,6 +39,8 @@ type MyStatefulSetSpec struct {
 type MyStatefulSetStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	PodIdx    int    `json:"podIdx"`
+	ErrReason string `json:"errReason"`
 }
 
 // +kubebuilder:object:root=true
