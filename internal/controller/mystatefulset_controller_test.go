@@ -30,6 +30,7 @@ import (
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,15 +41,81 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+var _ = Describe("MyStatefulSet controller", func() {
+	replicas := new(int)
+	*replicas = 3
+	period := new(int)
+	*period = 5
+	const (
+		resourceName     = "test-resource"
+		storageclassName = "standard"
+		size             = 2
+		image            = "quay.io/opstree/redis:latest"
+	)
+
+	Context("When create a resource", func() {
+		It("should create pods and pvc", func() {
+			By("create a statefulset")
+			ctx := context.Background()
+			mySet := &devopsv1.MyStatefulSet{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "devops.github.com/v1",
+					Kind:       "MyStatefulSet",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: devopsv1.MyStatefulSetSpec{
+					Replicas:     replicas,
+					StorageClass: storageclassName,
+					Size:         size,
+					GracePeriod:  period,
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      fmt.Sprintf("pod-%s", resourceName),
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "redis",
+									Image: image,
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "data",
+											MountPath: "/data",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, mySet)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, mySet)).Error().Should(HaveOccurred())
+		})
+	})
+})
+
 var _ = Describe("MyStatefulSet Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		replicas := new(int)
+		*replicas = 3
+		const (
+			resourceName     = "test-resource"
+			storageclassName = "standard"
+			size             = 2
+			image            = "quay.io/opstree/redis:latest"
+		)
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
 		mystatefulset := &devopsv1.MyStatefulSet{}
 
@@ -61,14 +128,25 @@ var _ = Describe("MyStatefulSet Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: devopsv1.MyStatefulSetSpec{
+						Replicas:     replicas,
+						StorageClass: storageclassName,
+						Size:         size,
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{Image: image},
+								},
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
+			// Cleanup logic after each test, like removing the resource instance.
 			resource := &devopsv1.MyStatefulSet{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
@@ -87,7 +165,7 @@ var _ = Describe("MyStatefulSet Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
+			// Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})

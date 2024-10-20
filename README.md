@@ -38,8 +38,20 @@ ca.crt  ca.key  ca.srl  san.cnf  tls.crt  tls.csr  tls-fullchain.crt  tls.key  t
 ➜  devops-golang-test git:(main) ✗ cp certs/tls.crt /tmp/k8s-webhook-server/serving-certs/
 ➜  devops-golang-test git:(main) ✗ cp certs/tls.key /tmp/k8s-webhook-server/serving-certs/
 ```
+测试环境准备
+```
+# 安装envtest
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
-测试
+# 设置准备环境
+➜  devops-golang-test git:(main) ✗ setup-envtest use 1.31.0
+Version: 1.31.0
+OS/Arch: linux/amd64
+Path: /home/shawn/.local/share/kubebuilder-envtest/k8s/1.31.0-linux-amd64
+➜  devops-golang-test git:(main) ✗ ln -s /home/shawn/.local/share/kubebuilder-envtest/k8s/1.31.0-linux-amd64 bin/k8s/1.31.0-linux-amd64
+```
+
+验证
 ====
 生成manifest并本地运行
 ```
